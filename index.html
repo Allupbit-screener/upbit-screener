@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>업비트 바닥 반전 스크리너 (V자 회복)</title>
+<style>
+  :root{
+    --bg:#0e1117; --panel:#161b22; --panel2:#1c232d; --line:#2a323d;
+    --text:#e6edf3; --muted:#8b949e; --accent:#3b82f6;
+    --green:#16c784; --red:#ea3943; --gold:#f5b301; --purple:#a371f7;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+    font-size:14px;line-height:1.5}
+  .wrap{max-width:1180px;margin:0 auto;padding:20px 16px 60px}
+  h1{font-size:20px;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:16px}
+  .bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:14px}
+  button{background:var(--accent);color:#fff;border:0;border-radius:8px;
+    padding:9px 16px;font-size:14px;font-weight:600;cursor:pointer}
+  button:disabled{opacity:.5;cursor:default}
+  .status{color:var(--muted);font-size:13px}
+  .filters{display:flex;gap:6px;flex-wrap:wrap;margin-left:auto}
+  .chip{background:var(--panel2);border:1px solid var(--line);border-radius:20px;
+    padding:5px 12px;font-size:12px;cursor:pointer;color:var(--muted)}
+  .chip.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .summary{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 14px;min-width:110px}
+  .card .n{font-size:22px;font-weight:700}
+  .card .l{font-size:12px;color:var(--muted)}
+  table{width:100%;border-collapse:collapse;background:var(--panel);
+    border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  th,td{padding:10px 9px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{background:var(--panel2);color:var(--muted);font-size:12px;font-weight:600;
+    cursor:pointer;user-select:none;position:sticky;top:0}
+  th:first-child,td:first-child{text-align:left}
+  tr:hover td{background:#1a2029}
+  td.name a{color:var(--text);text-decoration:none;font-weight:600}
+  td.name a:hover{color:var(--accent)}
+  .tkr{color:var(--muted);font-size:12px;margin-left:4px}
+  .up{color:var(--green)} .down{color:var(--red)}
+  .ratio{font-weight:700;font-size:15px}
+  .r-hi{color:var(--green)} .r-mid{color:var(--gold)}
+  .badges{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end}
+  .b{font-size:10.5px;padding:2px 6px;border-radius:5px;background:var(--panel2);
+    border:1px solid var(--line);color:var(--muted)}
+  .b.rsi{border-color:var(--purple);color:var(--purple)}
+  .b.vol{border-color:var(--green);color:var(--green)}
+  .b.ma20{border-color:#6ea8fe;color:#6ea8fe}
+  .b.rise{border-color:var(--gold);color:var(--gold)}
+  .err{background:#3a1a1d;border:1px solid var(--red);color:#ffb3b8;
+    padding:14px;border-radius:10px;margin-top:12px;display:none}
+  .legend{margin-top:16px;color:var(--muted);font-size:12.5px;line-height:1.85}
+  .legend b{color:var(--text)}
+  .bar-prog{height:6px;background:var(--panel2);border-radius:4px;overflow:hidden;flex:1;min-width:120px;display:none}
+  .bar-prog > i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}
+  @media(max-width:760px){.hide-sm{display:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📉→📈 업비트 바닥 반전 스크리너 <span style="font-size:13px;color:var(--muted)">(일봉 · V자 회복)</span></h1>
+  <div class="sub">업비트 전 원화(KRW) 종목 일봉을 실시간 분석해 <b>바닥을 찍고 되돌린 코인</b>을 찾습니다. 핵심 조건: <b>바닥 이후 2~3일 상승폭이 바닥 직전 3~5일 하락폭보다 같거나 큼</b>. 급락(하루 -15% 이상 폭락)으로 만들어진 바닥은 제외합니다.</div>
+
+  <div class="bar">
+    <button id="run">스캔 시작</button>
+    <div class="bar-prog" id="prog"><i></i></div>
+    <span class="status" id="status">버튼을 눌러 스캔을 시작하세요.</span>
+    <div class="filters">
+      <span class="chip on" data-f="all">반전 전체</span>
+      <span class="chip" data-f="12">회복배율 1.2+</span>
+      <span class="chip" data-f="15">회복배율 1.5+</span>
+    </div>
+  </div>
+
+  <div class="summary" id="summary"></div>
+  <div id="tableWrap"></div>
+  <div class="err" id="err"></div>
+
+  <div class="legend">
+    <div><b>반전 판정 조건</b> (모두 충족해야 목록에 표시)</div>
+    <div>① <b>바닥 형성</b>: 최근 6일 중 최저가가 <b>2~3일 전</b>에 찍힘 (그 후 2~3일 상승 중)</div>
+    <div>② <b>회복 우세</b>: 바닥 이후 상승폭 ≥ 바닥 직전(3~5일 전 고점→바닥) 하락폭 &nbsp;→ <b>회복배율 ≥ 1.0</b></div>
+    <div>③ <b>하락 실체</b>: 바닥 직전 하락폭이 3% 이상 (의미 있는 눌림)</div>
+    <div>④ <b>급락 제외</b>: 바닥 직전 구간에 하루 -15% 이상 폭락한 날이 있으면 제외</div>
+    <div style="margin-top:6px"><b>회복배율</b> = 바닥 후 상승폭 ÷ 바닥 전 하락폭. 클수록 되돌림이 강함. 보조 배지: RSI반등 · 거래량 · 20일선회복 · 당일상승.</div>
+    <div style="margin-top:8px;color:#6b7280">⚠️ 기술적 지표 참고용이며 매수 추천이 아닙니다. 최종 판단과 책임은 본인에게 있습니다.</div>
+  </div>
+</div>
+
+<script>
+const API="https://api.upbit.com/v1";
+const CRASH_DAY=-0.15;   // 하루 -15% 이하 = 급락
+const MIN_DOWN_PCT=3;    // 바닥 직전 최소 하락폭 %
+let rows=[], excluded=0, sortKey="ratio", sortDir=-1, filter="all";
+
+const $=s=>document.querySelector(s);
+const statusEl=$("#status"), progWrap=$("#prog"), progBar=$("#prog > i"), errEl=$("#err");
+
+function ema(arr,p){const k=2/(p+1);let e=arr[0],out=[e];for(let i=1;i<arr.length;i++){e=arr[i]*k+e*(1-k);out.push(e);}return out;}
+function sma(arr,p,i){if(i+1<p)return null;let s=0;for(let j=i-p+1;j<=i;j++)s+=arr[j];return s/p;}
+function rsiSeries(closes,p=14){
+  const r=Array(closes.length).fill(null);
+  if(closes.length<=p)return r;
+  let g=0,l=0;
+  for(let i=1;i<=p;i++){const d=closes[i]-closes[i-1];if(d>=0)g+=d;else l-=d;}
+  g/=p;l/=p;r[p]=l===0?100:100-100/(1+g/l);
+  for(let i=p+1;i<closes.length;i++){
+    const d=closes[i]-closes[i-1];
+    g=(g*(p-1)+(d>0?d:0))/p;l=(l*(p-1)+(d<0?-d:0))/p;
+    r[i]=l===0?100:100-100/(1+g/l);
+  }
+  return r;
+}
+
+function analyze(market,name,cd){
+  const c=cd.slice().reverse();            // oldest -> newest
+  if(c.length<12)return null;
+  const close=c.map(x=>x.trade_price), high=c.map(x=>x.high_price),
+        low=c.map(x=>x.low_price),   vol=c.map(x=>x.candle_acc_trade_volume);
+  const n=close.length, i=n-1;
+
+  // ① 최근 6일 중 최저 저가 = 바닥
+  let b=i, minLow=Infinity;
+  for(let k=i-5;k<=i;k++){if(k>=0&&low[k]<minLow){minLow=low[k];b=k;}}
+  const daysSince=i-b;
+  if(daysSince<2||daysSince>3)return null;          // 바닥이 2~3일 전이어야 함
+  if(b-5<0)return null;                             // 이전 데이터 부족
+
+  // 바닥 직전 3~5일 전 고점 → 하락폭
+  let downRef=-Infinity;
+  for(let k=b-5;k<=b-3;k++){if(high[k]>downRef)downRef=high[k];}
+  const bottomLow=low[b];
+  const downMove=downRef-bottomLow;
+  const upMove=close[i]-bottomLow;                  // 바닥 후 상승폭
+  const downPct=downMove/bottomLow*100;
+  const upPct=upMove/bottomLow*100;
+
+  // ④ 급락 판정 (바닥 직전 b-5 ~ b 구간에 하루 -15% 이하)
+  let crash=false, worst=0;
+  for(let k=b-5;k<=b;k++){if(k-1>=0){const ch=close[k]/close[k-1]-1;if(ch<worst)worst=ch;if(ch<=CRASH_DAY)crash=true;}}
+
+  const validShape = downPct>=MIN_DOWN_PCT && upMove>=downMove && upMove>0;
+  if(!validShape) return null;
+  const ratio = downMove>0 ? upMove/downMove : 0;
+
+  // 보조 지표
+  const rsi=rsiSeries(close,14);
+  const rNow=rsi[i], rPrev=rsi[i-1];
+  let wasOversold=false;
+  for(let k=Math.max(0,b-3);k<=b+1&&k<n;k++){if(rsi[k]!=null&&rsi[k]<35){wasOversold=true;break;}}
+  const rsiUp = rNow!=null&&rPrev!=null&&rNow>rPrev;
+  let vAvg=0,cnt=0;for(let k=Math.max(0,b-6);k<b;k++){vAvg+=vol[k];cnt++;}vAvg/=Math.max(1,cnt);
+  const volUp = vol[i]>vAvg*1.3 || (b+1<n && vol[b+1]>vAvg*1.3);
+  const ma20=sma(close,20,i);
+  const chgToday=(close[i]/close[i-1]-1)*100;
+
+  return {market,name,crash,ratio,downPct,upPct,daysSince,
+    price:close[i],chgToday,rsi:rNow,rsiUp,wasOversold,volUp,
+    aboveMA20: ma20!=null&&close[i]>ma20, worst:worst*100};
+}
+
+function fmtPrice(p){
+  if(p>=1000)return p.toLocaleString("ko-KR",{maximumFractionDigits:0});
+  if(p>=1)return p.toLocaleString("ko-KR",{maximumFractionDigits:2});
+  return p.toLocaleString("ko-KR",{maximumFractionDigits:4});
+}
+
+async function fetchJSON(url){const r=await fetch(url);if(!r.ok)throw new Error("HTTP "+r.status);return r.json();}
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
+async function run(){
+  errEl.style.display="none";$("#run").disabled=true;
+  rows=[];excluded=0;
+  try{
+    statusEl.textContent="마켓 목록 불러오는 중...";
+    const all=await fetchJSON(API+"/market/all?is_details=false");
+    const krw=all.filter(m=>m.market.startsWith("KRW-"));
+    progWrap.style.display="block";
+    let done=0;const batch=6;
+    for(let s=0;s<krw.length;s+=batch){
+      const slice=krw.slice(s,s+batch);
+      await Promise.all(slice.map(async m=>{
+        try{
+          const cd=await fetchJSON(API+"/candles/days?market="+m.market+"&count=120");
+          const a=analyze(m.market,m.korean_name,cd);
+          if(a){ if(a.crash) excluded++; else rows.push(a); }
+        }catch(e){}
+        done++;
+      }));
+      progBar.style.width=(done/krw.length*100).toFixed(0)+"%";
+      statusEl.textContent=`분석 중... ${done}/${krw.length} 종목`;
+      await sleep(120);
+    }
+    rows.sort((a,b)=>b.ratio-a.ratio);
+    progWrap.style.display="none";
+    statusEl.textContent=`완료 · 반전 ${rows.length}종목 (급락 제외 ${excluded}) · ${new Date().toLocaleString("ko-KR")}`;
+    render();
+  }catch(e){
+    progWrap.style.display="none";errEl.style.display="block";
+    errEl.innerHTML="데이터를 불러오지 못했습니다: "+e.message+
+      "<br>브라우저에서 파일을 직접 열어야 하며(더블클릭), 광고차단 확장프로그램이 업비트 API를 막을 수 있습니다.";
+    statusEl.textContent="오류 발생";
+  }
+  $("#run").disabled=false;
+}
+
+function passFilter(r){
+  if(filter==="12")return r.ratio>=1.2;
+  if(filter==="15")return r.ratio>=1.5;
+  return true;
+}
+
+function render(){
+  const list=rows.filter(passFilter).sort((a,b)=>((a[sortKey]??-1)-(b[sortKey]??-1))*sortDir);
+  const hi=rows.filter(r=>r.ratio>=1.5).length;
+  $("#summary").innerHTML=`
+    <div class="card"><div class="n">${rows.length}</div><div class="l">반전 종목</div></div>
+    <div class="card"><div class="n r-hi">${hi}</div><div class="l">회복배율 1.5+</div></div>
+    <div class="card"><div class="n" style="color:var(--red)">${excluded}</div><div class="l">급락 제외</div></div>
+    <div class="card"><div class="n">${list.length}</div><div class="l">현재 표시</div></div>`;
+
+  const th=(k,label)=>`<th data-k="${k}">${label}${sortKey===k?(sortDir<0?" ▼":" ▲"):""}</th>`;
+  let html=`<table><thead><tr>
+    <th style="text-align:left">코인</th>
+    ${th("ratio","회복배율")}
+    ${th("upPct","상승폭%")}
+    ${th("downPct","하락폭%")}
+    ${th("daysSince","바닥경과")}
+    ${th("price","현재가")}
+    ${th("chgToday","당일%")}
+    ${th("rsi","RSI")}
+    <th class="hide-sm">보조신호</th>
+  </tr></thead><tbody>`;
+  for(const r of list){
+    const rc=r.ratio>=1.5?"r-hi":r.ratio>=1.2?"r-mid":"";
+    const badges=[];
+    if(r.wasOversold&&r.rsiUp)badges.push(["RSI반등","rsi"]);
+    if(r.volUp)badges.push(["거래량","vol"]);
+    if(r.aboveMA20)badges.push(["20일선회복","ma20"]);
+    if(r.chgToday>0)badges.push(["당일상승","rise"]);
+    const bd=badges.map(b=>`<span class="b ${b[1]}">${b[0]}</span>`).join("")||"-";
+    html+=`<tr>
+      <td class="name"><a href="https://upbit.com/exchange?code=CRIX.UPBIT.${r.market}" target="_blank">${r.name}<span class="tkr">${r.market.replace("KRW-","")}</span></a></td>
+      <td class="ratio ${rc}">${r.ratio.toFixed(2)}배</td>
+      <td class="up">+${r.upPct.toFixed(1)}%</td>
+      <td class="down">-${r.downPct.toFixed(1)}%</td>
+      <td>${r.daysSince}일 전</td>
+      <td>${fmtPrice(r.price)}</td>
+      <td class="${r.chgToday>=0?"up":"down"}">${r.chgToday>=0?"+":""}${r.chgToday.toFixed(2)}%</td>
+      <td>${r.rsi!=null?r.rsi.toFixed(0):"-"}</td>
+      <td class="hide-sm"><div class="badges">${bd}</div></td>
+    </tr>`;
+  }
+  html+="</tbody></table>";
+  if(!list.length)html="<div style='padding:30px;text-align:center;color:var(--muted)'>조건에 맞는 반전 종목이 없습니다.</div>";
+  $("#tableWrap").innerHTML=html;
+  document.querySelectorAll("th[data-k]").forEach(el=>el.onclick=()=>{
+    const k=el.dataset.k;if(sortKey===k)sortDir*=-1;else{sortKey=k;sortDir=-1;}render();
+  });
+}
+
+document.querySelectorAll(".chip").forEach(c=>c.onclick=()=>{
+  document.querySelectorAll(".chip").forEach(x=>x.classList.remove("on"));
+  c.classList.add("on");filter=c.dataset.f;render();
+});
+$("#run").onclick=run;
+</script>
+</body>
+</html>
