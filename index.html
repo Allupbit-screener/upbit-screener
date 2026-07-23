@@ -86,6 +86,7 @@
     <div>② <b>회복 우세</b>: 바닥 이후 상승폭 ≥ 바닥 직전(3~5일 전 고점→바닥) 하락폭 &nbsp;→ <b>회복배율 ≥ 1.0</b></div>
     <div>③ <b>하락 실체</b>: 바닥 직전 하락폭이 3% 이상 (의미 있는 눌림)</div>
     <div>④ <b>급락 제외</b>: 바닥 직전 구간에 하루 -15% 이상 폭락한 날이 있으면 제외</div>
+    <div>⑤ <b>진짜 바닥</b>: 바닥 저가가 최근 14일 내 최저여야 함 + 현재 RSI 75 미만 (상승추세 중 얕은 눌림·이미 급등한 종목 제외)</div>
     <div style="margin-top:6px"><b>회복배율</b> = 바닥 후 상승폭 ÷ 바닥 전 하락폭. 클수록 되돌림이 강함. 보조 배지: RSI반등 · 거래량 · 20일선회복 · 당일상승.</div>
     <div style="margin-top:8px;color:#6b7280">⚠️ 기술적 지표 참고용이며 매수 추천이 아닙니다. 최종 판단과 책임은 본인에게 있습니다.</div>
   </div>
@@ -133,6 +134,11 @@ function analyze(market,name,cd){
   if(daysSince<1||daysSince>4)return null;          // 바닥이 1~4일 전이어야 함
   if(b-5<0)return null;                             // 이전 데이터 부족
 
+  // ★ 진짜 바닥 확인: 바닥 저가가 최근 14일 내 최저여야 함
+  //   (상승추세 중 얕은 눌림/이미 급등한 종목을 "바닥 반등"으로 오인 방지 — 예: ZAMA)
+  const LOOKBACK=14;
+  for(let k=Math.max(0,i-LOOKBACK);k<=i;k++){if(low[k]<low[b])return null;}
+
   // 바닥 직전 3~5일 전 고점 → 하락폭
   let downRef=-Infinity;
   for(let k=b-5;k<=b-3;k++){if(high[k]>downRef)downRef=high[k];}
@@ -153,6 +159,7 @@ function analyze(market,name,cd){
   // 보조 지표
   const rsi=rsiSeries(close,14);
   const rNow=rsi[i], rPrev=rsi[i-1];
+  if(rNow!=null && rNow>=75) return null;          // 이미 과열(반등 끝물) 제외
   let wasOversold=false;
   for(let k=Math.max(0,b-3);k<=b+1&&k<n;k++){if(rsi[k]!=null&&rsi[k]<35){wasOversold=true;break;}}
   const rsiUp = rNow!=null&&rPrev!=null&&rNow>rPrev;
