@@ -63,7 +63,7 @@
 <body>
 <div class="wrap">
   <h1>📉→📈 업비트 바닥 반전 스크리너 <span style="font-size:13px;color:var(--muted)">(일봉 · V자 회복)</span></h1>
-  <div class="sub">업비트 전 원화(KRW) 종목 일봉을 실시간 분석해 <b>바닥을 찍고 되돌린 코인</b>을 찾습니다. 핵심 조건: <b>바닥 이후 상승폭이 바닥 직전 3~5일 하락폭보다 같거나 큼</b> (바닥은 최근 1~7일 내). 급락(하루 -15% 이상 폭락)으로 만들어진 바닥은 제외합니다.</div>
+  <div class="sub">업비트 전 원화(KRW) 종목 일봉을 실시간 분석해 <b>바닥을 찍고 되돌린 코인</b>을 찾습니다. 핵심 조건: <b>바닥 이후 상승폭이 바닥 직전 3~5일 하락폭보다 같거나 큼</b> (바닥은 최근 1~4일 내). 급락(하루 -15% 이상 폭락)으로 만들어진 바닥은 제외합니다.</div>
 
   <div class="bar">
     <button id="run">스캔 시작</button>
@@ -82,7 +82,7 @@
 
   <div class="legend">
     <div><b>반전 판정 조건</b> (모두 충족해야 목록에 표시)</div>
-    <div>① <b>바닥 형성</b>: 최근 8일 중 최저가가 <b>1~7일 전</b>에 찍힘 (그 후 상승 중)</div>
+    <div>① <b>바닥 형성</b>: 최근 5일 중 최저가가 <b>1~4일 전</b>에 찍힘 (그 후 상승 중)</div>
     <div>② <b>회복 우세</b>: 바닥 이후 상승폭 ≥ 바닥 직전(3~5일 전 고점→바닥) 하락폭 &nbsp;→ <b>회복배율 ≥ 1.0</b></div>
     <div>③ <b>하락 실체</b>: 바닥 직전 하락폭이 3% 이상 (의미 있는 눌림)</div>
     <div>④ <b>급락 제외</b>: 바닥 직전 구간에 하루 -15% 이상 폭락한 날이 있으면 제외</div>
@@ -126,11 +126,11 @@ function analyze(market,name,cd){
         low=c.map(x=>x.low_price),   vol=c.map(x=>x.candle_acc_trade_volume);
   const n=close.length, i=n-1;
 
-  // ① 최근 8일 중 최저 저가 = 바닥
+  // ① 최근 5일 중 최저 저가 = 바닥
   let b=i, minLow=Infinity;
-  for(let k=i-7;k<=i;k++){if(k>=0&&low[k]<minLow){minLow=low[k];b=k;}}
+  for(let k=i-4;k<=i;k++){if(k>=0&&low[k]<minLow){minLow=low[k];b=k;}}
   const daysSince=i-b;
-  if(daysSince<1||daysSince>7)return null;          // 바닥이 1~7일 전이어야 함
+  if(daysSince<1||daysSince>4)return null;          // 바닥이 1~4일 전이어야 함
   if(b-5<0)return null;                             // 이전 데이터 부족
 
   // 바닥 직전 3~5일 전 고점 → 하락폭
