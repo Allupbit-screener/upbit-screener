@@ -92,7 +92,10 @@
 </div>
 
 <script>
-const API="https://api.upbit.com/v1";
+// ▼▼▼ 여기 한 줄만 본인 Cloudflare Worker 주소로 바꾸세요 (끝에 / 없이) ▼▼▼
+const PROXY="https://upbit-proxy.mcraenf1.workers.dev";
+// ▲▲▲ 예: https://upbit-proxy.hong.workers.dev  (프록시 없이 로컬 테스트만 하려면 PROXY="" 로) ▲▲▲
+const API=(PROXY||"https://api.upbit.com")+"/v1";
 const CRASH_DAY=-0.15;   // 하루 -15% 이하 = 급락
 const MIN_DOWN_PCT=3;    // 바닥 직전 최소 하락폭 %
 let rows=[], excluded=0, sortKey="ratio", sortDir=-1, filter="all";
