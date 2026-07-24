@@ -88,6 +88,7 @@
   <div class="modes">
     <div class="mode on" data-m="bottom">📉→📈 바닥 반등</div>
     <div class="mode" data-m="top">📈→📉 천장 하락전환</div>
+    <div class="mode" data-m="flat">📉➡️ 바닥 후 횡보</div>
   </div>
 
   <div class="sub" id="sub"></div>
@@ -114,6 +115,7 @@
 const PROXY="https://upbit-proxy.mcraenf1.workers.dev";
 const API=(PROXY||"https://api.upbit.com")+"/v1";
 const CRASH_DAY=-0.15, SPIKE_DAY=0.15, MIN_MOVE_PCT=3, LOOKBACK=14;
+const FLAT_MAX_RANGE=9, FLAT_MAX_DRIFT=7, FLAT_MIN_DROP=12, FLAT_MAX_POS=0.35, FLAT_MIN_DAYS=6;
 
 let MODE="bottom", rows=[], sortKey="ratio", sortDir=-1, filter="all";
 const $=s=>document.querySelector(s);
@@ -155,7 +157,7 @@ function analyze(market,name,cd){
     if(chgToday>0)badges.push(["당일상승","sig"]);
     return {market,name,ratio:downMove>0?upMove/downMove:0,defPct:upPct,oppPct:downPct,
       daysSince:ds,price:close[i],chgToday,rsi:rNow,badges};
-  } else {
+  } else if(MODE==="top"){
     let p=i, mx=-Infinity;
     for(let k=i-4;k<=i;k++){if(k>=0&&high[k]>mx){mx=high[k];p=k;}}
     const ds=i-p; if(ds<1||ds>4)return null; if(p-5<0)return null;
@@ -175,6 +177,38 @@ function analyze(market,name,cd){
     if(chgToday<0)badges.push(["당일하락","sig"]);
     return {market,name,ratio:upMove>0?downMove/upMove:0,defPct:downPct,oppPct:upPct,
       daysSince:ds,price:close[i],chgToday,rsi:rNow,badges};
+  } else {
+    // 바닥 후 횡보 (바닥 다지기): 현재부터 뒤로 밴드 폭이 유지되는 동안 확장
+    let bl=low[i], bh=high[i], days=1;
+    for(let k=i-1;k>=Math.max(0,i-20);k--){
+      const nl=Math.min(bl,low[k]), nh=Math.max(bh,high[k]);
+      if((nh-nl)/nl*100 > FLAT_MAX_RANGE) break;
+      bl=nl; bh=nh; days=i-k+1;
+    }
+    if(days<FLAT_MIN_DAYS) return null;                 // 최소 횡보 일수
+    const rangePct=(bh-bl)/bl*100;
+    const startIdx=i-days+1;
+    const driftPct=Math.abs(close[i]-close[startIdx])/close[startIdx]*100;
+    if(driftPct>FLAT_MAX_DRIFT) return null;            // 추세 없이 평평
+    let priorHigh=-Infinity;
+    for(let k=Math.max(0,startIdx-20);k<startIdx;k++){if(high[k]>priorHigh)priorHigh=high[k];}
+    if(priorHigh<=0) return null;
+    const dropPct=(priorHigh-bl)/priorHigh*100;
+    if(dropPct<FLAT_MIN_DROP) return null;              // 횡보 전에 하락(바닥 찍고)
+    let min30=Infinity,max30=-Infinity;
+    for(let k=Math.max(0,i-29);k<=i;k++){if(low[k]<min30)min30=low[k];if(high[k]>max30)max30=high[k];}
+    const pos=(close[i]-min30)/((max30-min30)||1);
+    if(pos>FLAT_MAX_POS) return null;                   // 바닥권(하단부)에서 횡보
+    let vRecent=0,cR=0; for(let k=startIdx;k<=i;k++){vRecent+=vol[k];cR++;}
+    let vPrior=0,cP=0; for(let k=Math.max(0,startIdx-days);k<startIdx;k++){vPrior+=vol[k];cP++;}
+    const volDry = cP>0 && (vRecent/Math.max(1,cR)) < (vPrior/Math.max(1,cP))*0.9;
+    const badges=[];
+    if(volDry) badges.push(["거래량↓","vol"]);
+    if(pos<=0.25) badges.push(["저점권","sig"]);
+    if(rNow!=null && rNow>=40 && rNow<=55) badges.push(["RSI중립","rsi"]);
+    if(ma20!=null && Math.abs(close[i]-ma20)/close[i]<=0.03) badges.push(["20일선근접","ma20"]);
+    return {market,name,ratio:days,defPct:rangePct,oppPct:dropPct,daysSince:days,
+      price:close[i],chgToday,rsi:rNow,badges};
   }
 }
 
@@ -218,53 +252,89 @@ async function run(){
   $("#run").disabled=false;
 }
 
-function passFilter(r){if(filter==="12")return r.ratio>=1.2;if(filter==="15")return r.ratio>=1.5;return true;}
+function passFilter(r){
+  if(MODE==="flat"){
+    if(filter==="12")return r.daysSince>=10;
+    if(filter==="15")return r.defPct<=7;
+    return true;
+  }
+  if(filter==="12")return r.ratio>=1.2;if(filter==="15")return r.ratio>=1.5;return true;
+}
 
 function render(){
-  const isTop=MODE==="top";
+  const isTop=MODE==="top", isFlat=MODE==="flat";
   const list=rows.filter(passFilter).sort((a,b)=>((a[sortKey]??-1)-(b[sortKey]??-1))*sortDir);
-  const hi=rows.filter(r=>r.ratio>=1.5).length;
-  const lbl=isTop?"하락전환 종목":"반등 종목";
-  const hiCls=isTop?"r-hi-t":"r-hi";
+  let lbl,hi,hiLbl,hiCls;
+  if(isFlat){lbl="횡보 종목";hi=rows.filter(r=>r.daysSince>=10).length;hiLbl="10일 이상";hiCls="";}
+  else if(isTop){lbl="하락전환 종목";hi=rows.filter(r=>r.ratio>=1.5).length;hiLbl="배율 1.5+";hiCls="r-hi-t";}
+  else {lbl="반등 종목";hi=rows.filter(r=>r.ratio>=1.5).length;hiLbl="배율 1.5+";hiCls="r-hi";}
   $("#summary").innerHTML=`
     <div class="card"><div class="n">${rows.length}</div><div class="l">${lbl}</div></div>
-    <div class="card"><div class="n ${hiCls}">${hi}</div><div class="l">배율 1.5+</div></div>
+    <div class="card"><div class="n ${hiCls}">${hi}</div><div class="l">${hiLbl}</div></div>
     <div class="card"><div class="n">${list.length}</div><div class="l">현재 표시</div></div>`;
 
-  const ratioLabel=isTop?"하락배율":"회복배율";
-  const defLabel=isTop?"낙폭%":"상승폭%";
-  const oppLabel=isTop?"직전상승%":"하락폭%";
-  const sinceLabel=isTop?"천장경과":"바닥경과";
   const th=(k,label)=>`<th data-k="${k}">${label}${sortKey===k?(sortDir<0?" ▼":" ▲"):""}</th>`;
-  let html=`<table><thead><tr>
-    <th style="text-align:left">코인</th>
-    ${th("ratio",ratioLabel)}
-    ${th("defPct",defLabel)}
-    ${th("oppPct",oppLabel)}
-    ${th("daysSince",sinceLabel)}
-    ${th("price","현재가")}
-    ${th("chgToday","당일%")}
-    ${th("rsi","RSI")}
-    <th class="hide-sm">보조신호</th>
-  </tr></thead><tbody>`;
-  for(const r of list){
-    const rc=isTop?(r.ratio>=1.5?"r-hi-t":r.ratio>=1.2?"r-mid":""):(r.ratio>=1.5?"r-hi":r.ratio>=1.2?"r-mid":"");
-    const defCell=isTop?`<td class="down">-${r.defPct.toFixed(1)}%</td>`:`<td class="up">+${r.defPct.toFixed(1)}%</td>`;
-    const oppCell=isTop?`<td class="up">+${r.oppPct.toFixed(1)}%</td>`:`<td class="down">-${r.oppPct.toFixed(1)}%</td>`;
-    const bd=r.badges.map(b=>`<span class="b ${b[1]}">${b[0]}</span>`).join("")||"-";
-    html+=`<tr>
-      <td class="name"><a href="https://upbit.com/exchange?code=CRIX.UPBIT.${r.market}" target="_blank">${r.name}<span class="tkr">${r.market.replace("KRW-","")}</span></a></td>
-      <td class="ratio ${rc}">${r.ratio.toFixed(2)}배</td>
-      ${defCell}${oppCell}
-      <td>${r.daysSince}일 전</td>
-      <td>${fmtPrice(r.price)}</td>
-      <td class="${r.chgToday>=0?"up":"down"}">${r.chgToday>=0?"+":""}${r.chgToday.toFixed(2)}%</td>
-      <td>${r.rsi!=null?r.rsi.toFixed(0):"-"}</td>
-      <td class="hide-sm"><div class="badges">${bd}</div></td>
-    </tr>`;
+  let html;
+  if(isFlat){
+    html=`<table><thead><tr>
+      <th style="text-align:left">코인</th>
+      ${th("daysSince","횡보일수")}
+      ${th("defPct","횡보폭%")}
+      ${th("oppPct","직전낙폭%")}
+      ${th("price","현재가")}
+      ${th("chgToday","당일%")}
+      ${th("rsi","RSI")}
+      <th class="hide-sm">보조신호</th>
+    </tr></thead><tbody>`;
+    for(const r of list){
+      const bd=r.badges.map(b=>`<span class="b ${b[1]}">${b[0]}</span>`).join("")||"-";
+      html+=`<tr>
+        <td class="name"><a href="https://upbit.com/exchange?code=CRIX.UPBIT.${r.market}" target="_blank">${r.name}<span class="tkr">${r.market.replace("KRW-","")}</span></a></td>
+        <td class="ratio">${r.daysSince}일</td>
+        <td>±${r.defPct.toFixed(1)}%</td>
+        <td class="down">-${r.oppPct.toFixed(1)}%</td>
+        <td>${fmtPrice(r.price)}</td>
+        <td class="${r.chgToday>=0?"up":"down"}">${r.chgToday>=0?"+":""}${r.chgToday.toFixed(2)}%</td>
+        <td>${r.rsi!=null?r.rsi.toFixed(0):"-"}</td>
+        <td class="hide-sm"><div class="badges">${bd}</div></td>
+      </tr>`;
+    }
+  } else {
+    const ratioLabel=isTop?"하락배율":"회복배율";
+    const defLabel=isTop?"낙폭%":"상승폭%";
+    const oppLabel=isTop?"직전상승%":"하락폭%";
+    const sinceLabel=isTop?"천장경과":"바닥경과";
+    html=`<table><thead><tr>
+      <th style="text-align:left">코인</th>
+      ${th("ratio",ratioLabel)}
+      ${th("defPct",defLabel)}
+      ${th("oppPct",oppLabel)}
+      ${th("daysSince",sinceLabel)}
+      ${th("price","현재가")}
+      ${th("chgToday","당일%")}
+      ${th("rsi","RSI")}
+      <th class="hide-sm">보조신호</th>
+    </tr></thead><tbody>`;
+    for(const r of list){
+      const rc=isTop?(r.ratio>=1.5?"r-hi-t":r.ratio>=1.2?"r-mid":""):(r.ratio>=1.5?"r-hi":r.ratio>=1.2?"r-mid":"");
+      const defCell=isTop?`<td class="down">-${r.defPct.toFixed(1)}%</td>`:`<td class="up">+${r.defPct.toFixed(1)}%</td>`;
+      const oppCell=isTop?`<td class="up">+${r.oppPct.toFixed(1)}%</td>`:`<td class="down">-${r.oppPct.toFixed(1)}%</td>`;
+      const bd=r.badges.map(b=>`<span class="b ${b[1]}">${b[0]}</span>`).join("")||"-";
+      html+=`<tr>
+        <td class="name"><a href="https://upbit.com/exchange?code=CRIX.UPBIT.${r.market}" target="_blank">${r.name}<span class="tkr">${r.market.replace("KRW-","")}</span></a></td>
+        <td class="ratio ${rc}">${r.ratio.toFixed(2)}배</td>
+        ${defCell}${oppCell}
+        <td>${r.daysSince}일 전</td>
+        <td>${fmtPrice(r.price)}</td>
+        <td class="${r.chgToday>=0?"up":"down"}">${r.chgToday>=0?"+":""}${r.chgToday.toFixed(2)}%</td>
+        <td>${r.rsi!=null?r.rsi.toFixed(0):"-"}</td>
+        <td class="hide-sm"><div class="badges">${bd}</div></td>
+      </tr>`;
+    }
   }
   html+="</tbody></table>";
-  if(!list.length)html=`<div style='padding:30px;text-align:center;color:var(--muted)'>조건에 맞는 ${isTop?"하락전환":"반등"} 종목이 없습니다.</div>`;
+  const emptyLbl=isFlat?"횡보":isTop?"하락전환":"반등";
+  if(!list.length)html=`<div style='padding:30px;text-align:center;color:var(--muted)'>조건에 맞는 ${emptyLbl} 종목이 없습니다.</div>`;
   $("#tableWrap").innerHTML=html;
   document.querySelectorAll("th[data-k]").forEach(el=>el.onclick=()=>{
     const k=el.dataset.k;if(sortKey===k)sortDir*=-1;else{sortKey=k;sortDir=-1;}render();
@@ -293,11 +363,24 @@ function setModeUI(){
        <div>⑤ <b>과열 제외</b>: 현재 RSI 75 이상(이미 급등)이면 제외</div>
        <div style="margin-top:6px"><b>회복배율</b>=바닥 후 상승폭 ÷ 바닥 전 하락폭. 클수록 되돌림이 강함.</div>
        <div style="margin-top:8px;color:#6b7280">⚠️ 기술적 지표 참고용이며 매수 추천이 아닙니다.</div>`;
+  if(MODE==="flat"){
+    $("#sub").innerHTML = `업비트 전 원화(KRW) 종목 일봉을 분석해 <b>바닥을 찍고 좁은 범위에서 횡보(바닥 다지기)하는 코인</b>을 찾습니다. 핵심: <b>최근 6일 이상 좁은 밴드(±9% 이내)</b> 유지 + 그 전에 <b>고점 대비 12%↑ 하락</b>으로 바닥권 진입 + 최근 30일 범위의 하단부에 위치.`;
+    $("#legend").innerHTML = `<div><b>바닥 후 횡보 판정</b> (모두 충족)</div>
+       <div>① <b>횡보 구간</b>: 최근 밴드 폭 ±9% 이내로 <b>6일 이상</b> 유지 (좁은 박스권)</div>
+       <div>② <b>추세 없음</b>: 구간 시작→현재 변동 7% 이내 (오르지도 내리지도 않음)</div>
+       <div>③ <b>바닥 찍고</b>: 횡보 직전 고점 대비 밴드가 12% 이상 아래 (하락 후 진입)</div>
+       <div>④ <b>바닥권 위치</b>: 최근 30일 범위의 하단 35% 이내 (고점 횡보 제외)</div>
+       <div style="margin-top:6px">정렬은 <b>횡보일수</b> 순(오래 다질수록 위). 보조 배지: 거래량↓ · 저점권 · RSI중립 · 20일선근접.</div>
+       <div style="margin-top:8px;color:#6b7280">⚠️ 기술적 지표 참고용이며 매수 추천이 아닙니다.</div>`;
+  }
+  const _chips=document.querySelectorAll('.chip');
+  if(MODE==="flat"){_chips[1].textContent="횡보 10일+";_chips[2].textContent="좁은폭 ≤7%";}
+  else{_chips[1].textContent="배율 1.2+";_chips[2].textContent="배율 1.5+";}
 }
 
 document.querySelectorAll(".mode").forEach(el=>el.onclick=()=>{
   document.querySelectorAll(".mode").forEach(x=>x.classList.remove("on"));
-  el.classList.add("on");MODE=el.dataset.m;rows=[];sortKey="ratio";sortDir=-1;
+  el.classList.add("on");MODE=el.dataset.m;rows=[];sortKey=(MODE==="flat"?"daysSince":"ratio");sortDir=-1;
   $("#summary").innerHTML="";$("#tableWrap").innerHTML="";
   statusEl.textContent="버튼을 눌러 스캔을 시작하세요.";
   setModeUI();
