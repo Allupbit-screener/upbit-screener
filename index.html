@@ -240,7 +240,7 @@ async function run(){
     }
     rows.sort((a,b)=>b.ratio-a.ratio);
     progWrap.style.display="none";
-    const lbl=MODE==="bottom"?"반등":"하락전환";
+    const lbl=MODE==="bottom"?"반등":MODE==="top"?"하락전환":"횡보";
     statusEl.textContent=`완료 · ${lbl} ${rows.length}종목 · ${new Date().toLocaleString("ko-KR")}`;
     render();
   }catch(e){
