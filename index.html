@@ -120,7 +120,7 @@
 // ▼▼▼ 본인 Cloudflare Worker 주소 (끝에 / 없이) ▼▼▼
 const PROXY="https://upbit-proxy.mcraenf1.workers.dev";
 const API=(PROXY||"https://api.upbit.com")+"/v1";
-const CRASH_DAY=-0.15, SPIKE_DAY=0.15, MIN_MOVE_PCT=3, LOOKBACK=14;
+const CRASH_DAY=-0.15, SPIKE_DAY=0.15, MIN_MOVE_PCT=3, LOOKBACK=14, MIN_RATIO=0.5;
 const FLAT_MAX_RANGE=9, FLAT_MAX_DRIFT=7, FLAT_MIN_DROP=12, FLAT_MAX_POS=0.35, FLAT_MIN_DAYS=6;
 
 let MODE="bottom", rows=[], sortKey="ratio", sortDir=-1, filter="all";
@@ -145,13 +145,13 @@ function analyze(market,name,cd){
 
   if(MODE==="bottom"){
     let b=i, mn=Infinity;
-    for(let k=i-4;k<=i;k++){if(k>=0&&low[k]<mn){mn=low[k];b=k;}}
-    const ds=i-b; if(ds<1||ds>4)return null; if(b-5<0)return null;
+    for(let k=i-7;k<=i;k++){if(k>=0&&low[k]<mn){mn=low[k];b=k;}}
+    const ds=i-b; if(ds<1||ds>7)return null; if(b-5<0)return null;
     for(let k=Math.max(0,i-LOOKBACK);k<=i;k++){if(low[k]<low[b])return null;}
     let downRef=-Infinity; for(let k=b-5;k<=b-3;k++){if(high[k]>downRef)downRef=high[k];}
     const base=low[b], downMove=downRef-base, upMove=close[i]-base;
     const downPct=downMove/base*100, upPct=upMove/base*100;
-    if(!(downPct>=MIN_MOVE_PCT && upMove>=downMove && upMove>0))return null;
+    if(!(downPct>=MIN_MOVE_PCT && upMove>=downMove*MIN_RATIO && upMove>0))return null;
     if(rNow!=null && rNow>=75)return null;
     for(let k=b-5;k<=b;k++){if(k-1>=0 && close[k]/close[k-1]-1<=CRASH_DAY)return null;}
     for(let k=Math.max(0,b-6);k<b;k++){vAvg+=vol[k];cnt++;} vAvg/=Math.max(1,cnt);
@@ -351,7 +351,7 @@ function setModeUI(){
   const isTop=MODE==="top";
   $("#sub").innerHTML = isTop
     ? `업비트 전 원화(KRW) 종목 일봉을 분석해 <b>천장을 찍고 하락 추세로 돌아선 코인</b>을 찾습니다. 핵심: <b>천장 이후 하락폭 ≥ 천장 직전 3~5일 상승폭</b> (천장은 최근 1~4일 내, 14일 최고). 급등(하루 +15%↑)으로 만든 천장·과매도(RSI 25↓)는 제외.`
-    : `업비트 전 원화(KRW) 종목 일봉을 분석해 <b>바닥을 찍고 되돌린 코인</b>을 찾습니다. 핵심: <b>바닥 이후 상승폭 ≥ 바닥 직전 3~5일 하락폭</b> (바닥은 최근 1~4일 내, 14일 최저). 급락(하루 -15%↓)으로 만든 바닥·과열(RSI 75↑)은 제외.`;
+    : `업비트 전 원화(KRW) 종목 일봉을 분석해 <b>바닥을 찍고 되돌린 코인</b>을 찾습니다. 핵심: <b>바닥 이후 상승폭이 바닥 직전 3~5일 하락폭의 절반 이상</b> (바닥은 최근 1~7일 내, 14일 최저). 급락(하루 -15%↓)으로 만든 바닥·과열(RSI 75↑)은 제외.`;
   $("#legend").innerHTML = isTop
     ? `<div><b>천장 하락전환 판정</b> (모두 충족)</div>
        <div>① <b>천장 형성</b>: 최근 5일 중 최고가가 1~4일 전 + 그 고점이 최근 14일 최고</div>
@@ -362,8 +362,8 @@ function setModeUI(){
        <div style="margin-top:6px"><b>하락배율</b>=천장 후 하락폭 ÷ 천장 전 상승폭. 클수록 되돌림이 강함.</div>
        <div style="margin-top:8px;color:#6b7280">⚠️ 기술적 지표 참고용이며 매도/매수 추천이 아닙니다.</div>`
     : `<div><b>바닥 반등 판정</b> (모두 충족)</div>
-       <div>① <b>바닥 형성</b>: 최근 5일 중 최저가가 1~4일 전 + 그 저가가 최근 14일 최저</div>
-       <div>② <b>회복 우세</b>: 바닥 이후 상승폭 ≥ 바닥 직전(3~5일 전 고점→바닥) 하락폭 → <b>회복배율 ≥ 1.0</b></div>
+       <div>① <b>바닥 형성</b>: 최근 8일 중 최저가가 1~7일 전 + 그 저가가 최근 14일 최저</div>
+       <div>② <b>회복 우세</b>: 바닥 이후 상승폭 ≥ 바닥 직전(3~5일 전 고점→바닥) 하락폭의 절반 → <b>회복배율 ≥ 0.5</b></div>
        <div>③ <b>하락 실체</b>: 바닥 직전 하락폭 3% 이상</div>
        <div>④ <b>급락 제외</b>: 바닥 직전에 하루 -15% 이상 폭락한 날이 있으면 제외</div>
        <div>⑤ <b>과열 제외</b>: 현재 RSI 75 이상(이미 급등)이면 제외</div>
