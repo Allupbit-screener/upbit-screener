@@ -33,6 +33,9 @@
   .chip{background:var(--panel2);border:1px solid var(--line);border-radius:20px;
     padding:5px 12px;font-size:12px;cursor:pointer;color:var(--muted)}
   .chip.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .tf{background:var(--panel2);border:1px solid var(--line);color:var(--muted);border-radius:8px;
+    padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;user-select:none}
+  .tf.on{background:var(--accent);color:#fff;border-color:var(--accent)}
   .summary{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 14px;min-width:110px}
   .card .n{font-size:22px;font-weight:700}
@@ -101,6 +104,8 @@
 
   <div class="bar">
     <button class="run" id="run">스캔 시작</button>
+    <span class="tf on" data-tf="day">일봉</span>
+    <span class="tf" data-tf="4h">4시간봉</span>
     <div class="bar-prog" id="prog"><i></i></div>
     <span class="status" id="status">버튼을 눌러 스캔을 시작하세요.</span>
     <div class="filters">
@@ -123,7 +128,7 @@ const API=(PROXY||"https://api.upbit.com")+"/v1";
 const CRASH_DAY=-0.15, SPIKE_DAY=0.15, MIN_MOVE_PCT=3, LOOKBACK=14, MIN_RATIO=1.0;
 const FLAT_MAX_RANGE=9, FLAT_MAX_DRIFT=7, FLAT_MIN_DROP=12, FLAT_MAX_POS=0.35, FLAT_MIN_DAYS=6;
 
-let MODE="bottom", rows=[], sortKey="ratio", sortDir=-1, filter="all";
+let MODE="bottom", TF="day", rows=[], sortKey="ratio", sortDir=-1, filter="all";
 const $=s=>document.querySelector(s);
 const statusEl=$("#status"), progWrap=$("#prog"), progBar=$("#prog > i"), errEl=$("#err");
 
@@ -236,7 +241,7 @@ async function run(){
     let done=0;const batch=6;
     for(let s=0;s<krw.length;s+=batch){
       await Promise.all(krw.slice(s,s+batch).map(async m=>{
-        try{const cd=await fetchJSON(API+"/candles/days?market="+m.market+"&count=120");
+        try{const cd=await fetchJSON(API+(TF==="4h"?"/candles/minutes/240":"/candles/days")+"?market="+m.market+"&count=120");
           const a=analyze(m.market,m.korean_name,cd);if(a)rows.push(a);}catch(e){}
         done++;
       }));
@@ -247,7 +252,7 @@ async function run(){
     rows.sort((a,b)=>b.ratio-a.ratio);
     progWrap.style.display="none";
     const lbl=MODE==="bottom"?"반등":MODE==="top"?"하락전환":"횡보";
-    statusEl.textContent=`완료 · ${lbl} ${rows.length}종목 · ${new Date().toLocaleString("ko-KR")}`;
+    statusEl.textContent=`완료 · ${lbl} ${rows.length}종목 · ${TF==="4h"?"4시간봉":"일봉"} · ${new Date().toLocaleString("ko-KR")}`;
     render();
   }catch(e){
     progWrap.style.display="none";errEl.style.display="block";
@@ -269,6 +274,7 @@ function passFilter(r){
 
 function render(){
   const isTop=MODE==="top", isFlat=MODE==="flat";
+  const UNIT=TF==="4h"?"봉":"일";
   const list=rows.filter(passFilter).sort((a,b)=>((a[sortKey]??-1)-(b[sortKey]??-1))*sortDir);
   let lbl,hi,hiLbl,hiCls;
   if(isFlat){lbl="횡보 종목";hi=rows.filter(r=>r.daysSince>=10).length;hiLbl="10일 이상";hiCls="";}
@@ -284,7 +290,7 @@ function render(){
   if(isFlat){
     html=`<table><thead><tr>
       <th style="text-align:left">코인</th>
-      ${th("daysSince","횡보일수")}
+      ${th("daysSince","횡보"+UNIT+"수")}
       ${th("defPct","횡보폭%")}
       ${th("oppPct","직전낙폭%")}
       ${th("price","현재가")}
@@ -296,7 +302,7 @@ function render(){
       const bd=r.badges.map(b=>`<span class="b ${b[1]}">${b[0]}</span>`).join("")||"-";
       html+=`<tr>
         <td class="name"><a href="https://upbit.com/exchange?code=CRIX.UPBIT.${r.market}" target="_blank">${r.name}<span class="tkr">${r.market.replace("KRW-","")}</span></a></td>
-        <td class="ratio">${r.daysSince}일</td>
+        <td class="ratio">${r.daysSince}${UNIT}</td>
         <td>±${r.defPct.toFixed(1)}%</td>
         <td class="down">-${r.oppPct.toFixed(1)}%</td>
         <td>${fmtPrice(r.price)}</td>
@@ -330,7 +336,7 @@ function render(){
         <td class="name"><a href="https://upbit.com/exchange?code=CRIX.UPBIT.${r.market}" target="_blank">${r.name}<span class="tkr">${r.market.replace("KRW-","")}</span></a></td>
         <td class="ratio ${rc}">${r.ratio.toFixed(2)}배</td>
         ${defCell}${oppCell}
-        <td>${r.daysSince}일 전</td>
+        <td>${r.daysSince}${UNIT} 전</td>
         <td>${fmtPrice(r.price)}</td>
         <td class="${r.chgToday>=0?"up":"down"}">${r.chgToday>=0?"+":""}${r.chgToday.toFixed(2)}%</td>
         <td>${r.rsi!=null?r.rsi.toFixed(0):"-"}</td>
@@ -382,6 +388,7 @@ function setModeUI(){
   const _chips=document.querySelectorAll('.chip');
   if(MODE==="flat"){_chips[1].textContent="횡보 10일+";_chips[2].textContent="좁은폭 ≤7%";}
   else{_chips[1].textContent="배율 1.2+";_chips[2].textContent="배율 1.5+";}
+  if(TF==="4h") $("#sub").innerHTML="⏱ <b>4시간봉</b> 기준 — 아래 설명·표의 '일' 단위는 4시간봉 개수로 보세요.<br>"+$("#sub").innerHTML;
 }
 
 document.querySelectorAll(".mode").forEach(el=>el.onclick=()=>{
@@ -394,6 +401,15 @@ document.querySelectorAll(".mode").forEach(el=>el.onclick=()=>{
 document.querySelectorAll(".chip").forEach(c=>c.onclick=()=>{
   document.querySelectorAll(".chip").forEach(x=>x.classList.remove("on"));
   c.classList.add("on");filter=c.dataset.f;render();
+});
+
+// 일봉 / 4시간봉 전환
+document.querySelectorAll(".tf").forEach(t=>t.onclick=()=>{
+  document.querySelectorAll(".tf").forEach(x=>x.classList.remove("on"));
+  t.classList.add("on");TF=t.dataset.tf;rows=[];
+  $("#summary").innerHTML="";$("#tableWrap").innerHTML="";
+  statusEl.textContent="버튼을 눌러 스캔을 시작하세요.";
+  setModeUI();
 });
 $("#run").onclick=run;
 setModeUI();
