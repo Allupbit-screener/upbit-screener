@@ -99,6 +99,7 @@
     <div class="mode" data-m="top">📈→📉 천장 하락전환</div>
     <div class="mode" data-m="flat">📉➡️ 바닥 후 횡보</div>
     <div class="mode" data-m="vol">📊 거래량 급증</div>
+    <div class="mode" data-m="up">🔥 연속 상승</div>
   </div>
 
   <div class="sub" id="sub"></div>
@@ -221,7 +222,7 @@ function analyze(market,name,cd){
     if(ma20!=null && Math.abs(close[i]-ma20)/close[i]<=0.03) badges.push(["20일선근접","ma20"]);
     return {market,name,ratio:days,defPct:rangePct,oppPct:dropPct,daysSince:days,
       price:close[i],chgToday,rsi:rNow,badges};
-  } else {
+  } else if(MODE==="vol"){
     // 거래량 급증 (RVOL = 현재 봉 거래량 ÷ 최근 20봉 평균 거래량)
     const val=c.map(x=>x.candle_acc_trade_price);
     let sum=0,cc=0; for(let k=Math.max(0,i-20);k<i;k++){sum+=vol[k];cc++;}
@@ -235,6 +236,22 @@ function analyze(market,name,cd){
     if(rNow!=null && rNow>=70) badges.push(["과열","ma20"]);
     if(ma20!=null && close[i]>ma20) badges.push(["20일선상단","vol"]);
     return {market,name,ratio:rvol,rvol,barVal:val[i],
+      daysSince:0,price:close[i],chgToday,rsi:rNow,badges};
+  } else {
+    // 연속 상승 (현재 봉부터 뒤로 close가 직전보다 높은 봉이 몇 개 연속인지)
+    let streak=0;
+    for(let k=i;k>=1;k--){ if(close[k]>close[k-1]) streak++; else break; }
+    if(streak<2) return null;                        // 최소 2연속
+    const val=c.map(x=>x.candle_acc_trade_price);
+    if(val[i]<5e7) return null;                       // 거래대금 5천만원 미만(잡음) 제외
+    const gainPct=(close[i]/close[i-streak]-1)*100;   // 연속 구간 총 상승%
+    let sum=0,cc=0; for(let k=Math.max(0,i-20);k<i;k++){sum+=vol[k];cc++;}
+    const avg=sum/Math.max(1,cc);
+    const badges=[];
+    if(avg>0 && vol[i]>avg*1.5) badges.push(["거래량↑","sig"]);
+    if(rNow!=null && rNow>=70) badges.push(["과열","ma20"]);
+    if(ma20!=null && close[i]>ma20) badges.push(["20일선상단","vol"]);
+    return {market,name,ratio:streak,streak,gainPct,
       daysSince:0,price:close[i],chgToday,rsi:rNow,badges};
   }
 }
@@ -296,15 +313,21 @@ function passFilter(r){
     if(filter==="15")return r.rvol>=5;
     return true;
   }
+  if(MODE==="up"){
+    if(filter==="12")return r.streak>=3;
+    if(filter==="15")return r.streak>=5;
+    return true;
+  }
   if(filter==="12")return r.ratio>=1.2;if(filter==="15")return r.ratio>=1.5;return true;
 }
 
 function render(){
-  const isTop=MODE==="top", isFlat=MODE==="flat", isVol=MODE==="vol";
+  const isTop=MODE==="top", isFlat=MODE==="flat", isVol=MODE==="vol", isUp=MODE==="up";
   const UNIT=TF==="4h"?"봉":"일";
   const list=rows.filter(passFilter).sort((a,b)=>((a[sortKey]??-1)-(b[sortKey]??-1))*sortDir);
   let lbl,hi,hiLbl,hiCls;
-  if(isVol){lbl="거래량 급증 종목";hi=rows.filter(r=>r.rvol>=3).length;hiLbl="3배 이상";hiCls="r-hi";}
+  if(isUp){lbl="연속 상승 종목";hi=rows.filter(r=>r.streak>=5).length;hiLbl="5연속 이상";hiCls="r-hi";}
+  else if(isVol){lbl="거래량 급증 종목";hi=rows.filter(r=>r.rvol>=3).length;hiLbl="3배 이상";hiCls="r-hi";}
   else if(isFlat){lbl="횡보 종목";hi=rows.filter(r=>r.daysSince>=10).length;hiLbl="10일 이상";hiCls="";}
   else if(isTop){lbl="하락전환 종목";hi=rows.filter(r=>r.ratio>=1.5).length;hiLbl="배율 1.5+";hiCls="r-hi-t";}
   else {lbl="반등 종목";hi=rows.filter(r=>r.ratio>=1.5).length;hiLbl="배율 1.5+";hiCls="r-hi";}
@@ -315,7 +338,29 @@ function render(){
 
   const th=(k,label)=>`<th data-k="${k}">${label}${sortKey===k?(sortDir<0?" ▼":" ▲"):""}</th>`;
   let html;
-  if(isFlat){
+  if(isUp){
+    html=`<table><thead><tr>
+      <th style="text-align:left">코인</th>
+      ${th("ratio","연속상승")}
+      ${th("gainPct","구간상승%")}
+      ${th("chgToday","봉변동%")}
+      ${th("price","현재가")}
+      ${th("rsi","RSI")}
+      <th class="hide-sm">신호</th>
+    </tr></thead><tbody>`;
+    for(const r of list){
+      const bd=r.badges.map(b=>`<span class="b ${b[1]}">${b[0]}</span>`).join("")||"-";
+      html+=`<tr>
+        <td class="name"><a href="https://upbit.com/exchange?code=CRIX.UPBIT.${r.market}" target="_blank">${r.name}<span class="tkr">${r.market.replace("KRW-","")}</span></a></td>
+        <td class="ratio r-hi">${r.streak}연속</td>
+        <td class="up">+${r.gainPct.toFixed(1)}%</td>
+        <td class="${r.chgToday>=0?"up":"down"}">${r.chgToday>=0?"+":""}${r.chgToday.toFixed(2)}%</td>
+        <td>${fmtPrice(r.price)}</td>
+        <td>${r.rsi!=null?r.rsi.toFixed(0):"-"}</td>
+        <td class="hide-sm"><div class="badges">${bd}</div></td>
+      </tr>`;
+    }
+  } else if(isFlat){
     html=`<table><thead><tr>
       <th style="text-align:left">코인</th>
       ${th("daysSince","횡보"+UNIT+"수")}
@@ -395,7 +440,7 @@ function render(){
     }
   }
   html+="</tbody></table>";
-  const emptyLbl=isVol?"거래량 급증":isFlat?"횡보":isTop?"하락전환":"반등";
+  const emptyLbl=isUp?"연속 상승":isVol?"거래량 급증":isFlat?"횡보":isTop?"하락전환":"반등";
   if(!list.length)html=`<div style='padding:30px;text-align:center;color:var(--muted)'>조건에 맞는 ${emptyLbl} 종목이 없습니다.</div>`;
   $("#tableWrap").innerHTML=html;
   document.querySelectorAll("th[data-k]").forEach(el=>el.onclick=()=>{
@@ -444,9 +489,19 @@ function setModeUI(){
        <div style="margin-top:6px">정렬은 RVOL 순. <b>상승봉</b>=매수세 유입, <b>하락봉</b>=매도세 동반. RSI 70↑이면 '과열' 배지.</div>
        <div style="margin-top:8px;color:#6b7280">⚠️ 기술적 지표 참고용이며 매수 추천이 아닙니다.</div>`;
   }
+  if(MODE==="up"){
+    $("#sub").innerHTML = `업비트 전 원화(KRW) 종목 중 <b>봉이 연속으로 상승 중인 코인</b>을 찾습니다. 현재 봉부터 뒤로 종가가 직전 종가보다 높은 봉이 몇 개 연속인지 세어 <b>2연속 이상</b>을 표시하고, 연속 수 순으로 정렬합니다. (거래대금 5천만원 미만 제외)`;
+    $("#legend").innerHTML = `<div><b>연속 상승 판정</b></div>
+       <div>① <b>연속 상승</b> = 현재 봉부터 뒤로 종가 > 직전 종가인 봉의 연속 개수 (2개 이상)</div>
+       <div>② <b>구간상승%</b> = 연속 시작점 대비 현재까지 총 상승률</div>
+       <div>③ 거래대금 5천만원 미만은 잡음으로 제외. 필터로 3연속·5연속 이상만 보기 가능</div>
+       <div style="margin-top:6px">배지: 거래량↑(20봉 평균의 1.5배↑) · 과열(RSI 70↑) · 20일선상단. 일봉이면 N일 연속, 4시간봉이면 N봉 연속.</div>
+       <div style="margin-top:8px;color:#6b7280">⚠️ 기술적 지표 참고용이며 매수 추천이 아닙니다. 연속 상승이 길수록 되돌림(조정) 위험도 커집니다.</div>`;
+  }
   const _chips=document.querySelectorAll('.chip');
   if(MODE==="flat"){_chips[1].textContent="횡보 10일+";_chips[2].textContent="좁은폭 ≤7%";}
   else if(MODE==="vol"){_chips[1].textContent="3배+";_chips[2].textContent="5배+";}
+  else if(MODE==="up"){_chips[1].textContent="3연속+";_chips[2].textContent="5연속+";}
   else{_chips[1].textContent="배율 1.2+";_chips[2].textContent="배율 1.5+";}
   if(TF==="4h") $("#sub").innerHTML="⏱ <b>4시간봉</b> 기준 — 아래 설명·표의 '일' 단위는 4시간봉 개수로 보세요.<br>"+$("#sub").innerHTML;
 }
