@@ -290,7 +290,7 @@ async function run(){
     }
     rows.sort((a,b)=>b.ratio-a.ratio);
     progWrap.style.display="none";
-    const lbl=MODE==="bottom"?"반등":MODE==="top"?"하락전환":"횡보";
+    const lbl=MODE==="bottom"?"반등":MODE==="top"?"하락전환":MODE==="flat"?"횡보":MODE==="vol"?"거래량급증":"연속상승";
     statusEl.textContent=`완료 · ${lbl} ${rows.length}종목 · ${TF==="4h"?"4시간봉":"일봉"} · ${new Date().toLocaleString("ko-KR")}`;
     render();
   }catch(e){
