@@ -100,6 +100,7 @@
     <div class="mode" data-m="flat">📉➡️ 바닥 후 횡보</div>
     <div class="mode" data-m="vol">📊 거래량 급증</div>
     <div class="mode" data-m="up">🔥 연속 상승</div>
+    <div class="mode" data-m="bb">🎯 볼린저 반전</div>
   </div>
 
   <div class="sub" id="sub"></div>
@@ -108,6 +109,7 @@
     <button class="run" id="run">스캔 시작</button>
     <span class="tf on" data-tf="day">일봉</span>
     <span class="tf" data-tf="4h">4시간봉</span>
+    <span class="tf" data-tf="15m">15분봉</span>
     <div class="bar-prog" id="prog"><i></i></div>
     <span class="status" id="status">버튼을 눌러 스캔을 시작하세요.</span>
     <div class="filters">
@@ -140,6 +142,13 @@ function rsiSeries(c,p=14){const r=Array(c.length).fill(null);if(c.length<=p)ret
   for(let i=1;i<=p;i++){const d=c[i]-c[i-1];if(d>=0)g+=d;else l-=d;}g/=p;l/=p;r[p]=l===0?100:100-100/(1+g/l);
   for(let i=p+1;i<c.length;i++){const d=c[i]-c[i-1];g=(g*(p-1)+(d>0?d:0))/p;l=(l*(p-1)+(d<0?-d:0))/p;r[i]=l===0?100:100-100/(1+g/l);}return r;}
 
+function bbands(cl,i,p=20,k=2){
+  if(i+1<p)return null;
+  let s=0; for(let j=i-p+1;j<=i;j++)s+=cl[j]; const mid=s/p;
+  let v=0; for(let j=i-p+1;j<=i;j++){const d=cl[j]-mid;v+=d*d;} const sd=Math.sqrt(v/p);
+  return {mid,upper:mid+k*sd,lower:mid-k*sd};
+}
+function tfLabel(){return TF==="4h"?"4시간봉":TF==="15m"?"15분봉":"일봉";}
 function analyze(market,name,cd){
   const c=cd.slice().reverse();
   if(c.length<15)return null;
@@ -237,7 +246,7 @@ function analyze(market,name,cd){
     if(ma20!=null && close[i]>ma20) badges.push(["20일선상단","vol"]);
     return {market,name,ratio:rvol,rvol,barVal:val[i],
       daysSince:0,price:close[i],chgToday,rsi:rNow,badges};
-  } else {
+  } else if(MODE==="up"){
     // 연속 상승 (현재 봉부터 뒤로 close가 직전보다 높은 봉이 몇 개 연속인지)
     let streak=0;
     for(let k=i;k>=1;k--){ if(close[k]>close[k-1]) streak++; else break; }
@@ -252,6 +261,32 @@ function analyze(market,name,cd){
     if(rNow!=null && rNow>=70) badges.push(["과열","ma20"]);
     if(ma20!=null && close[i]>ma20) badges.push(["20일선상단","vol"]);
     return {market,name,ratio:streak,streak,gainPct,
+      daysSince:0,price:close[i],chgToday,rsi:rNow,badges};
+  } else {
+    // 볼린저밴드 반전 (기간 20, ±2σ): 밴드 터치 후 되돌려 중앙선(MB) 돌파
+    if(i<25) return null;
+    const val=c.map(x=>x.candle_acc_trade_price);
+    if(val[i]<3e7) return null;                      // 거래대금 3천만원 미만 제외
+    const bb=bbands(close,i,20,2), bbP=bbands(close,i-1,20,2);
+    if(!bb||!bbP) return null;
+    const bwPct=(bb.upper-bb.lower)/bb.mid*100;       // 밴드폭%
+    let lowerTouch=false, upperTouch=false;           // 최근 5봉 내 밴드 터치 여부
+    for(let k=i-1;k>=Math.max(20,i-5);k--){
+      const bk=bbands(close,k,20,2); if(!bk)continue;
+      if(low[k]<=bk.lower) lowerTouch=true;
+      if(high[k]>=bk.upper) upperTouch=true;
+    }
+    const crossUp = close[i]>bb.mid && close[i-1]<=bbP.mid;    // 중앙선 상향 돌파
+    const crossDown = close[i]<bb.mid && close[i-1]>=bbP.mid;  // 중앙선 하향 돌파
+    let dir=null;
+    if(lowerTouch && crossUp) dir="up";          // 하단 터치 후 중앙선 상향 돌파
+    else if(upperTouch && crossDown) dir="down"; // 상단 터치 후 중앙선 하향 돌파
+    if(!dir) return null;
+    const badges=[];
+    badges.push(dir==="up"?["하단반등","sig"]:["상단반락","rsi"]);
+    let sum=0,cc=0; for(let k2=Math.max(0,i-20);k2<i;k2++){sum+=vol[k2];cc++;} const avg=sum/Math.max(1,cc);
+    if(avg>0&&vol[i]>avg*1.5) badges.push(["거래량↑","vol"]);
+    return {market,name,ratio:Math.abs(chgToday),dir,bwPct,barVal:val[i],
       daysSince:0,price:close[i],chgToday,rsi:rNow,badges};
   }
 }
@@ -280,7 +315,7 @@ async function run(){
     let done=0;const batch=6;
     for(let s=0;s<krw.length;s+=batch){
       await Promise.all(krw.slice(s,s+batch).map(async m=>{
-        try{const cd=await fetchJSON(API+(TF==="4h"?"/candles/minutes/240":"/candles/days")+"?market="+m.market+"&count=120");
+        try{const cd=await fetchJSON(API+(TF==="4h"?"/candles/minutes/240":TF==="15m"?"/candles/minutes/15":"/candles/days")+"?market="+m.market+"&count=120");
           const a=analyze(m.market,m.korean_name,cd);if(a)rows.push(a);}catch(e){}
         done++;
       }));
@@ -290,8 +325,8 @@ async function run(){
     }
     rows.sort((a,b)=>b.ratio-a.ratio);
     progWrap.style.display="none";
-    const lbl=MODE==="bottom"?"반등":MODE==="top"?"하락전환":MODE==="flat"?"횡보":MODE==="vol"?"거래량급증":"연속상승";
-    statusEl.textContent=`완료 · ${lbl} ${rows.length}종목 · ${TF==="4h"?"4시간봉":"일봉"} · ${new Date().toLocaleString("ko-KR")}`;
+    const lbl=MODE==="bottom"?"반등":MODE==="top"?"하락전환":MODE==="flat"?"횡보":MODE==="vol"?"거래량급증":MODE==="up"?"연속상승":"볼린저반전";
+    statusEl.textContent=`완료 · ${lbl} ${rows.length}종목 · ${tfLabel()} · ${new Date().toLocaleString("ko-KR")}`;
     render();
   }catch(e){
     progWrap.style.display="none";errEl.style.display="block";
@@ -318,15 +353,21 @@ function passFilter(r){
     if(filter==="15")return r.streak>=5;
     return true;
   }
+  if(MODE==="bb"){
+    if(filter==="12")return r.dir==="down";
+    if(filter==="15")return r.dir==="up";
+    return true;
+  }
   if(filter==="12")return r.ratio>=1.2;if(filter==="15")return r.ratio>=1.5;return true;
 }
 
 function render(){
-  const isTop=MODE==="top", isFlat=MODE==="flat", isVol=MODE==="vol", isUp=MODE==="up";
-  const UNIT=TF==="4h"?"봉":"일";
+  const isTop=MODE==="top", isFlat=MODE==="flat", isVol=MODE==="vol", isUp=MODE==="up", isBB=MODE==="bb";
+  const UNIT=TF==="day"?"일":"봉";
   const list=rows.filter(passFilter).sort((a,b)=>((a[sortKey]??-1)-(b[sortKey]??-1))*sortDir);
   let lbl,hi,hiLbl,hiCls;
-  if(isUp){lbl="연속 상승 종목";hi=rows.filter(r=>r.streak>=5).length;hiLbl="5연속 이상";hiCls="r-hi";}
+  if(isBB){lbl="볼린저 반전 종목";hi=rows.filter(r=>r.dir==="up").length;hiLbl="하단 반등";hiCls="r-hi";}
+  else if(isUp){lbl="연속 상승 종목";hi=rows.filter(r=>r.streak>=5).length;hiLbl="5연속 이상";hiCls="r-hi";}
   else if(isVol){lbl="거래량 급증 종목";hi=rows.filter(r=>r.rvol>=3).length;hiLbl="3배 이상";hiCls="r-hi";}
   else if(isFlat){lbl="횡보 종목";hi=rows.filter(r=>r.daysSince>=10).length;hiLbl="10일 이상";hiCls="";}
   else if(isTop){lbl="하락전환 종목";hi=rows.filter(r=>r.ratio>=1.5).length;hiLbl="배율 1.5+";hiCls="r-hi-t";}
@@ -338,7 +379,29 @@ function render(){
 
   const th=(k,label)=>`<th data-k="${k}">${label}${sortKey===k?(sortDir<0?" ▼":" ▲"):""}</th>`;
   let html;
-  if(isUp){
+  if(isBB){
+    html=`<table><thead><tr>
+      <th style="text-align:left">코인</th>
+      <th style="text-align:left">신호</th>
+      ${th("bwPct","밴드폭%")}
+      ${th("chgToday","봉변동%")}
+      ${th("barVal","거래대금")}
+      ${th("price","현재가")}
+      ${th("rsi","RSI")}
+    </tr></thead><tbody>`;
+    for(const r of list){
+      const sig=r.dir==="up"?`<span class="up">🔵 하단반등</span>`:`<span class="down">🔴 상단반락</span>`;
+      html+=`<tr>
+        <td class="name"><a href="https://upbit.com/exchange?code=CRIX.UPBIT.${r.market}" target="_blank">${r.name}<span class="tkr">${r.market.replace("KRW-","")}</span></a></td>
+        <td style="text-align:left">${sig}</td>
+        <td>${r.bwPct.toFixed(1)}%</td>
+        <td class="${r.chgToday>=0?"up":"down"}">${r.chgToday>=0?"+":""}${r.chgToday.toFixed(2)}%</td>
+        <td>${fmtKRW(r.barVal)}</td>
+        <td>${fmtPrice(r.price)}</td>
+        <td>${r.rsi!=null?r.rsi.toFixed(0):"-"}</td>
+      </tr>`;
+    }
+  } else if(isUp){
     html=`<table><thead><tr>
       <th style="text-align:left">코인</th>
       ${th("ratio","연속상승")}
@@ -440,7 +503,7 @@ function render(){
     }
   }
   html+="</tbody></table>";
-  const emptyLbl=isUp?"연속 상승":isVol?"거래량 급증":isFlat?"횡보":isTop?"하락전환":"반등";
+  const emptyLbl=isBB?"볼린저 반전":isUp?"연속 상승":isVol?"거래량 급증":isFlat?"횡보":isTop?"하락전환":"반등";
   if(!list.length)html=`<div style='padding:30px;text-align:center;color:var(--muted)'>조건에 맞는 ${emptyLbl} 종목이 없습니다.</div>`;
   $("#tableWrap").innerHTML=html;
   document.querySelectorAll("th[data-k]").forEach(el=>el.onclick=()=>{
@@ -498,12 +561,22 @@ function setModeUI(){
        <div style="margin-top:6px">배지: 거래량↑(20봉 평균의 1.5배↑) · 과열(RSI 70↑) · 20일선상단. 일봉이면 N일 연속, 4시간봉이면 N봉 연속.</div>
        <div style="margin-top:8px;color:#6b7280">⚠️ 기술적 지표 참고용이며 매수 추천이 아닙니다. 연속 상승이 길수록 되돌림(조정) 위험도 커집니다.</div>`;
   }
+  if(MODE==="bb"){
+    $("#sub").innerHTML = `업비트 전 원화(KRW) 종목의 <b>볼린저밴드(기간 20, ±2σ) 반전</b>을 찾습니다. 밴드 터치 후 되돌려 <b>중앙선(MB=20이평)을 돌파</b>할 때 신호. <b>하단 반등</b>=하단선 터치 후 중앙선 상향 돌파(상승), <b>상단 반락</b>=상단선 터치 후 중앙선 하향 돌파(하락). 15분봉에서 단기 반전 포착에 유용합니다.`;
+    $("#legend").innerHTML = `<div><b>볼린저밴드 반전 판정</b> (기간 20, ±2σ, MB=중앙선)</div>
+       <div>🔵 <b>하단 반등(상승)</b>: 최근 5봉 내 하단선 터치 → 이번 봉이 <b>중앙선을 상향 돌파</b> (종가가 중앙선 위로)</div>
+       <div>🔴 <b>상단 반락(하락)</b>: 최근 5봉 내 상단선 터치 → 이번 봉이 <b>중앙선을 하향 돌파</b> (종가가 중앙선 아래로)</div>
+       <div><b>밴드폭%</b> = (상단−하단)/중심 × 100. 좁을수록 변동성 수축 상태.</div>
+       <div>거래대금 3천만원 미만은 잡음으로 제외. 필터로 상단반락/하단반등만 볼 수 있음. 배지: 거래량↑.</div>
+       <div style="margin-top:8px;color:#6b7280">⚠️ 기술적 지표 참고용이며 매수/매도 추천이 아닙니다.</div>`;
+  }
   const _chips=document.querySelectorAll('.chip');
   if(MODE==="flat"){_chips[1].textContent="횡보 10일+";_chips[2].textContent="좁은폭 ≤7%";}
   else if(MODE==="vol"){_chips[1].textContent="3배+";_chips[2].textContent="5배+";}
   else if(MODE==="up"){_chips[1].textContent="3연속+";_chips[2].textContent="5연속+";}
+  else if(MODE==="bb"){_chips[1].textContent="상단 반락";_chips[2].textContent="하단 반등";}
   else{_chips[1].textContent="배율 1.2+";_chips[2].textContent="배율 1.5+";}
-  if(TF==="4h") $("#sub").innerHTML="⏱ <b>4시간봉</b> 기준 — 아래 설명·표의 '일' 단위는 4시간봉 개수로 보세요.<br>"+$("#sub").innerHTML;
+  if(TF!=="day") $("#sub").innerHTML="⏱ <b>"+tfLabel()+"</b> 기준 — 아래 설명·표의 '일' 단위는 "+tfLabel()+" 개수로 보세요.<br>"+$("#sub").innerHTML;
 }
 
 document.querySelectorAll(".mode").forEach(el=>el.onclick=()=>{
